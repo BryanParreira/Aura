@@ -10,7 +10,6 @@ const CodeBlock = ({ node, inline, className, children, onExecuteCommand, ...pro
   const match = /language-(\w+)/.exec(className || '');
   const codeText = String(children).replace(/\n$/, '');
 
-  // Detect executable scripts
   const isExecutable = match && ['bash', 'sh', 'powershell', 'cmd'].includes(match[1].toLowerCase());
 
   const handleCopy = () => {
@@ -36,31 +35,15 @@ const CodeBlock = ({ node, inline, className, children, onExecuteCommand, ...pro
             </button>
           </div>
         </div>
-        <SyntaxHighlighter
-          style={vscDarkPlus}
-          language={match[1]}
-          PreTag="div"
-          customStyle={{ margin: 0, padding: '12px', borderRadius: '0 0 8px 8px', fontSize: '13px', background: '#0d0d0d' }}
-          {...props}
-        >
+        <SyntaxHighlighter style={vscDarkPlus} language={match[1]} PreTag="div" customStyle={{ margin: 0, padding: '12px', borderRadius: '0 0 8px 8px', fontSize: '13px', background: '#0d0d0d' }} {...props}>
           {codeText}
         </SyntaxHighlighter>
       </div>
     );
   }
-
   return <code className={className} style={{background: 'rgba(255,255,255,0.15)', padding:'2px 5px', borderRadius:'4px', color:'#ff79c6', fontSize:'0.9em'}} {...props}>{children}</code>;
 };
 
 export const MarkdownMessage = ({ content, onExecuteCommand }: { content: string, onExecuteCommand?: (cmd: string) => void }) => {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{ 
-        code: (props) => <CodeBlock {...props} onExecuteCommand={onExecuteCommand} /> 
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  );
+  return <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: (props) => <CodeBlock {...props} onExecuteCommand={onExecuteCommand} /> }}>{content}</ReactMarkdown>;
 };

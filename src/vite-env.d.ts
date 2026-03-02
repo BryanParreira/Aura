@@ -7,7 +7,11 @@ interface ElectronAPI {
   setUndetectable: (state: boolean) => Promise<void>;
   
   toggleAlwaysOnTop: (flag: boolean) => Promise<void>;
-  runCommand: (cmd: string) => Promise<{ success: boolean; output: string }>; // NEW
+  runCommand: (cmd: string) => Promise<{ success: boolean; output: string }>;
+  
+  getActiveContext: () => Promise<{ title: string; app: string } | null>;
+  getClipboard: () => Promise<string>;
+  onAnalyzeContext: (callback: () => void) => void;
 
   proxyRequest: (options: any) => Promise<any>;
   streamRequest: (options: any) => void;
@@ -21,22 +25,6 @@ interface ElectronAPI {
   onAppWokeUp: (callback: () => void) => void;
 }
 
-declare global {
-  interface Window {
-    electronAPI: ElectronAPI;
-    SpeechRecognition: any;
-    webkitSpeechRecognition: any;
-  }
-}
-
-// --- FIX FOR GITHUB BUILD ERRORS ---
-declare module 'react-syntax-highlighter' {
-  export const Prism: any;
-  export const Light: any;
-}
-
-declare module 'react-syntax-highlighter/dist/esm/styles/prism' {
-  export const vscDarkPlus: any;
-  const style: any;
-  export default style;
-}
+declare global { interface Window { electronAPI: ElectronAPI; SpeechRecognition: any; webkitSpeechRecognition: any; } }
+declare module 'react-syntax-highlighter' { export const Prism: any; export const Light: any; }
+declare module 'react-syntax-highlighter/dist/esm/styles/prism' { export const vscDarkPlus: any; const style: any; export default style; }

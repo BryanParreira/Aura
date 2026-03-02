@@ -69,6 +69,7 @@
     "release": "npm run electron:build -- --publish always"
   },
   "dependencies": {
+    "active-win": "^8.2.0",
     "electron-updater": "^6.1.7",
     "framer-motion": "^12.34.3",
     "lucide-react": "^0.309.0",

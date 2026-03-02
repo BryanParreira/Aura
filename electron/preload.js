@@ -7,7 +7,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setUndetectable: (state) => ipcRenderer.invoke('set-undetectable', state),
   
   toggleAlwaysOnTop: (flag) => ipcRenderer.invoke('toggle-always-on-top', flag),
-  runCommand: (cmd) => ipcRenderer.invoke('run-command', cmd), // NEW: Execute command
+  runCommand: (cmd) => ipcRenderer.invoke('run-command', cmd),
+  
+  // OMNISCIENCE APIS
+  getActiveContext: () => ipcRenderer.invoke('get-active-context'),
+  getClipboard: () => ipcRenderer.invoke('get-clipboard'),
+  onAnalyzeContext: (callback) => ipcRenderer.on('analyze-context', () => callback()),
 
   proxyRequest: (options) => ipcRenderer.invoke('proxy-request', options),
   streamRequest: (options) => ipcRenderer.send('stream-request', options),
