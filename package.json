@@ -1,7 +1,7 @@
 {
   "name": "aura-ai",
   "private": true,
-  "version": "2.1.0",
+  "version": "2.1.1",
   "main": "electron/main.js",
   "description": "The Invisible AI Overlay",
   "author": "BryanParreira",
