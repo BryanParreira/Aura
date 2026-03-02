@@ -6,21 +6,20 @@ import {
   RefreshCw, Download, CheckCircle, Square, Trash2,
   Pin, PinOff
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { MarkdownMessage } from './MarkdownMessage';
 import './index.css';
 
-const DEFAULT_SYSTEM = "You are Aura, an intelligent OS copilot. Be concise.";
+// Instructing the AI to format commands properly
+const DEFAULT_SYSTEM = "You are Aura, an intelligent OS copilot. Be concise. If the user asks you to perform a system task, output the script in a `bash` or `powershell` code block.";
 
-// --- DRAGGABLE COMPONENT ---
 const Draggable = ({ children, initialPos }) => {
   const [pos, setPos] = useState(initialPos);
   const isDragging = useRef(false);
   const dragOffset = useRef({ x: 0, y: 0 });
 
   const handleMouseDown = (e) => {
-    // Allow interaction with form elements and buttons
     if (e.target.closest('button') || e.target.closest('input') || e.target.closest('select') || e.target.closest('textarea') || e.target.closest('.no-drag')) return;
-    
     isDragging.current = true;
     dragOffset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
     window.electronAPI.setIgnoreMouse(false);
@@ -58,7 +57,7 @@ const Draggable = ({ children, initialPos }) => {
 const MainInterface = () => {
   const [messages, setMessages] = useState(() => {
     const saved = localStorage.getItem('aura_history');
-    return saved ? JSON.parse(saved) : [{ id: 1, text: "Welcome to Aura", sender: 'ai' }];
+    return saved ? JSON.parse(saved) : [{ id: 1, text: "Welcome to Aura.", sender: 'ai' }];
   });
   
   const [input, setInput] = useState("");
@@ -79,20 +78,17 @@ const MainInterface = () => {
   const [ollamaModels, setOllamaModels] = useState([]);
   
   const chatEndRef = useRef(null);
-  const inputRef = useRef(null); // Reference to the input field
-  
+  const inputRef = useRef(null);
   const activeRequestId = useRef(null);
   const abortController = useRef(false);
+  const latestMessageRef = useRef(""); // To hold the latest string for TTS
 
   useEffect(() => {
     localStorage.setItem('aura_history', JSON.stringify(messages));
   }, [messages]);
 
-  // --- FOCUS RESTORATION LOGIC ---
-  // Fixes the issue where clicking back into the app doesn't let you type
   useEffect(() => {
     const handleFocus = () => {
-      // If chat is showing and settings are closed, force focus to input
       if (showChat && !showSettings && inputRef.current) {
         inputRef.current.focus();
       }
@@ -100,6 +96,17 @@ const MainInterface = () => {
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
   }, [showChat, showSettings]);
+
+  // TTS Helper
+  const speakText = (text) => {
+    if (!isLive) return;
+    window.speechSynthesis.cancel();
+    // Strip markdown formatting for cleaner speech
+    const cleanText = text.replace(/[*#_`]/g, '').replace(/\[.*?\]\(.*?\)/g, 'link');
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.rate = 1.05;
+    window.speechSynthesis.speak(utterance);
+  };
 
   useEffect(() => {
     window.electronAPI.setIgnoreMouse(true);
@@ -123,9 +130,7 @@ const MainInterface = () => {
       if (res.error) {
         setMessages(prev => {
           const last = prev[prev.length - 1];
-          if (last.sender === 'ai') {
-            return [...prev.slice(0, -1), { ...last, text: "Error: " + res.error, isLoading: false }];
-          }
+          if (last.sender === 'ai') return [...prev.slice(0, -1), { ...last, text: "Error: " + res.error, isLoading: false }];
           return prev;
         });
         setIsLoading(false);
@@ -141,6 +146,8 @@ const MainInterface = () => {
         });
         setIsLoading(false);
         activeRequestId.current = null;
+        // Trigger TTS when message completes
+        speakText(latestMessageRef.current);
       } else {
         handleStreamChunk(res.chunk);
       }
@@ -149,7 +156,7 @@ const MainInterface = () => {
     return () => {
       window.electronAPI.removeStreamListener();
     };
-  }, [messages, config.provider]);
+  }, [messages, config.provider, isLive]);
 
   const handleStreamChunk = (chunk) => {
     let token = "";
@@ -181,7 +188,8 @@ const MainInterface = () => {
       setMessages(prev => {
         const last = prev[prev.length - 1];
         if (last.sender === 'ai') {
-          return [...prev.slice(0, -1), { ...last, text: last.text + token }];
+          latestMessageRef.current = last.text + token;
+          return [...prev.slice(0, -1), { ...last, text: latestMessageRef.current }];
         }
         return prev;
       });
@@ -213,10 +221,6 @@ const MainInterface = () => {
     window.electronAPI.checkForUpdates();
   };
 
-  const quitAndInstall = () => {
-    window.electronAPI.quitAndInstall();
-  };
-
   const togglePin = () => {
     const newState = !isPinned;
     setIsPinned(newState);
@@ -228,12 +232,13 @@ const MainInterface = () => {
       const img = await window.electronAPI.captureScreen();
       setMessages(p => [...p, { id: Date.now(), text: "Analyze this screen.", sender: 'user', isImage: true }]);
       if (!showChat) setShowChat(true);
-      callAI("Describe this screen.", img);
+      callAI("Describe this screen in detail.", img);
     } catch (e) {}
   };
 
   const handleSend = () => {
     if (!input.trim()) return;
+    window.speechSynthesis.cancel(); // Stop speaking if user interrupts
     setMessages(p => [...p, { id: Date.now(), text: input, sender: 'user' }]);
     setInput("");
     callAI(input);
@@ -243,19 +248,29 @@ const MainInterface = () => {
     abortController.current = true;
     setIsLoading(false);
     activeRequestId.current = null;
+    window.speechSynthesis.cancel();
   };
 
-  const clearHistory = () => {
-    setMessages([{ id: 1, text: "Welcome to Aura", sender: 'ai' }]);
+  // Agentic Command Execution Loop
+  const executeAgentCommand = async (cmd) => {
+    setMessages(p => [...p, { id: Date.now(), text: `Executing...\n\`\`\`bash\n${cmd}\n\`\`\``, sender: 'user' }]);
+    setIsLoading(true);
+    
+    const res = await window.electronAPI.runCommand(cmd);
+    const feedback = `I executed your command. Here is the terminal output:\n\`\`\`\n${res.output || "Success (No Output)"}\n\`\`\`\nTell me if it worked or if we need to fix an error.`;
+    
+    setMessages(p => [...p, { id: Date.now()+1, text: feedback, sender: 'user' }]);
+    callAI(feedback);
   };
 
   const callAI = async (prompt, img = null) => {
     abortController.current = false;
+    latestMessageRef.current = "";
     const requestId = Date.now().toString();
     activeRequestId.current = requestId;
     setIsLoading(true);
 
-    setMessages(p => [...p, { id: Date.now() + 1, text: "", sender: 'ai', isLoading: true }]);
+    setMessages(p => [...p, { id: Date.now() + 2, text: "", sender: 'ai', isLoading: true }]);
 
     const { provider, apiKey, model, systemContext } = config;
     const imageBase64 = img ? img.split(',')[1] : null;
@@ -265,10 +280,7 @@ const MainInterface = () => {
       content: m.text
     }));
 
-    const fullMessages = [
-      { role: 'system', content: systemContext || DEFAULT_SYSTEM },
-      ...history
-    ];
+    const fullMessages = [{ role: 'system', content: systemContext || DEFAULT_SYSTEM }, ...history];
 
     if (provider === 'ollama') {
       const newMessage = { role: 'user', content: prompt };
@@ -278,15 +290,10 @@ const MainInterface = () => {
         url: 'http://localhost:11434/api/chat',
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: { 
-          model: model || 'llama3', 
-          messages: [...fullMessages, newMessage], 
-          stream: true 
-        },
+        body: { model: model || 'llama3', messages: [...fullMessages, newMessage], stream: true },
         requestId
       });
-    } 
-    else if (provider === 'openai') {
+    } else if (provider === 'openai') {
       const content = [{ type: "text", text: prompt }];
       if (imageBase64) content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } });
 
@@ -294,11 +301,7 @@ const MainInterface = () => {
         url: 'https://api.openai.com/v1/chat/completions',
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: { 
-          model: model || 'gpt-4o', 
-          messages: [...fullMessages, { role: 'user', content }],
-          stream: true
-        },
+        body: { model: model || 'gpt-4o', messages: [...fullMessages, { role: 'user', content }], stream: true },
         requestId
       });
     }
@@ -320,15 +323,13 @@ const MainInterface = () => {
           const transcript = event.results[0][0].transcript;
           if (transcript.trim()) {
             setInput(transcript); 
+            window.speechSynthesis.cancel();
             setMessages(p => [...p, { id: Date.now(), text: transcript, sender: 'user' }]);
             callAIRef.current(transcript);
           }
         };
         recognition.onend = () => { if (isLive) try { recognition.start(); } catch (e) {} };
         try { recognition.start(); } catch (e) {}
-      } else {
-        alert("Speech Recognition not supported.");
-        setIsLive(false);
       }
     }
     return () => { if (recognition) recognition.stop(); };
@@ -348,10 +349,9 @@ const MainInterface = () => {
           </button>
           
           <button className="icon-btn" onClick={handleCapture} title="Snap Screen"><Camera size={16} /></button>
-          
           <div className="divider" />
           
-          <button className={`icon-btn ${isPinned ? 'active-white' : ''}`} onClick={togglePin} title={isPinned ? "Unpin (Always on Top)" : "Pin"}>
+          <button className={`icon-btn ${isPinned ? 'active-white' : ''}`} onClick={togglePin} title={isPinned ? "Unpin" : "Pin to Top"}>
             {isPinned ? <Pin size={16} /> : <PinOff size={16} />}
           </button>
 
@@ -362,95 +362,83 @@ const MainInterface = () => {
           <button className="icon-btn danger-hover" onClick={() => window.electronAPI.quitApp()} title="Quit Aura"><Power size={16} /></button>
         </div>
 
-        {showChat && (
-          <div className={`glass-panel chat-window ${isLoading ? 'thinking-border' : ''}`}>
-            
-            {showSettings ? (
-              <div className="settings-panel no-drag">
-                <div className="setting-header"><span>Config</span><button className="icon-btn" onClick={() => setShowSettings(false)}><X size={16}/></button></div>
-                <button className="setting-input" onClick={clearHistory} style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'6px', cursor:'pointer', marginBottom:'10px', color: '#ff79c6'}}>
-                  <Trash2 size={14}/> Clear Conversation History
-                </button>
-                <div className="setting-section"><div className="section-title"><Cpu size={12}/> Brain</div>
-                  <div className="setting-row"><select className="setting-input" value={config.provider} onChange={e => setConfig({...config, provider: e.target.value})}><option value="ollama">Ollama (Local)</option><option value="openai">OpenAI</option></select></div>
-                  {config.provider === 'ollama' ? 
-                    <div className="setting-row"><select className="setting-input" value={config.model} onChange={e => setConfig({...config, model: e.target.value})}>{ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}</select></div> : 
-                    <div className="setting-row"><input className="setting-input" type="password" value={config.apiKey} onChange={e => setConfig({...config, apiKey: e.target.value})} placeholder="API Key..." /></div>
-                  }
-                </div>
-                <div className="setting-section"><div className="section-title"><Terminal size={12}/> Persona</div><textarea className="setting-input area" value={config.systemContext} onChange={e => setConfig({...config, systemContext: e.target.value})} /></div>
-                
-                <div className="setting-section" style={{marginTop: 'auto', marginBottom: '10px', background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px'}}>
-                  <div className="section-title" style={{marginBottom:'5px'}}><RefreshCw size={12}/> Updates</div>
-                  {updateStatus.status === 'idle' && (
-                    <button className="setting-input" onClick={checkForUpdates} style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'6px', cursor:'pointer'}}>
-                      <RefreshCw size={14}/> Check for Updates
-                    </button>
-                  )}
-                  {updateStatus.status === 'checking' && <div style={{fontSize:'12px', color:'#aaa', textAlign:'center', padding:'5px'}}>Checking...</div>}
-                  {updateStatus.status === 'available' && <div style={{fontSize:'12px', color:'#3b82f6', textAlign:'center', padding:'5px'}}>Update found! Downloading...</div>}
-                  {updateStatus.status === 'downloading' && (
-                    <div style={{width:'100%', background:'rgba(255,255,255,0.1)', height:'6px', borderRadius:'3px', overflow:'hidden'}}>
-                      <div style={{width: `${updateStatus.percent}%`, background:'#3b82f6', height:'100%'}} />
-                    </div>
-                  )}
-                  {updateStatus.status === 'ready' && (
-                    <button className="setting-input" onClick={quitAndInstall} style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'6px', cursor:'pointer', background:'rgba(34, 197, 94, 0.2)', color:'#4ade80'}}>
-                      <Download size={14}/> Restart & Install
-                    </button>
-                  )}
-                  {updateStatus.status === 'uptodate' && <div style={{fontSize:'12px', color:'#4ade80', textAlign:'center', padding:'5px', display:'flex', alignItems:'center', justifyContent:'center', gap:'5px'}}><CheckCircle size={14}/> Aura is up to date</div>}
-                  {updateStatus.status === 'error' && <div style={{fontSize:'11px', color:'#ef4444', textAlign:'center', padding:'5px'}}>Error: {updateStatus.error}</div>}
-                </div>
-                <button className="save-btn" onClick={saveSettings}>Save</button>
-              </div>
-            ) : (
-              <>
-                <div className="chat-header">
-                  <span className={`status-text ${isLive ? 'live' : ''}`}>{isLive ? "● LISTENING" : "● AURA READY"}</span>
-                  <button className="icon-btn" onClick={() => setShowSettings(!showSettings)}><Settings size={14}/></button>
-                </div>
-
-                <div className="chat-body no-drag">
-                  {messages.map((m) => (
-                    <div key={m.id} className={`msg-row ${m.sender}`}>
-                      <div className="msg-bubble">
-                        {m.isImage ? (
-                          "📸 Screen Captured"
-                        ) : m.sender === 'ai' && !m.text ? (
-                          <div className="thinking-bubble">
-                            <div className="dot" />
-                            <div className="dot" />
-                            <div className="dot" />
-                          </div>
-                        ) : (
-                          <MarkdownMessage content={m.text} />
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  <div ref={chatEndRef} />
-                </div>
-
-                <div className="input-area no-drag">
-                  <div className="input-glass">
-                    {/* Added ref={inputRef} here */}
-                    <input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} placeholder="Ask Aura..." />
-                    {isLoading ? (
-                      <button className="icon-btn" onClick={handleStop} title="Stop Generating">
-                        <Square size={14} fill="currentColor" />
-                      </button>
-                    ) : (
-                      <button className="icon-btn" onClick={handleSend} title="Send">
-                        <Send size={14}/>
-                      </button>
-                    )}
+        <AnimatePresence>
+          {showChat && (
+            <motion.div 
+              initial={{ opacity: 0, y: -20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.95 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className={`glass-panel chat-window ${isLoading ? 'thinking-border' : ''}`}
+            >
+              
+              {showSettings ? (
+                <div className="settings-panel no-drag">
+                  <div className="setting-header"><span>Config</span><button className="icon-btn" onClick={() => setShowSettings(false)}><X size={16}/></button></div>
+                  <button className="setting-input" onClick={() => setMessages([{ id: 1, text: "Memory Cleared.", sender: 'ai' }])} style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'6px', cursor:'pointer', marginBottom:'10px', color: '#ff79c6'}}>
+                    <Trash2 size={14}/> Clear Memory
+                  </button>
+                  <div className="setting-section"><div className="section-title"><Cpu size={12}/> Brain</div>
+                    <div className="setting-row"><select className="setting-input" value={config.provider} onChange={e => setConfig({...config, provider: e.target.value})}><option value="ollama">Ollama (Local)</option><option value="openai">OpenAI</option></select></div>
+                    {config.provider === 'ollama' ? 
+                      <div className="setting-row"><select className="setting-input" value={config.model} onChange={e => setConfig({...config, model: e.target.value})}>{ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}</select></div> : 
+                      <div className="setting-row"><input className="setting-input" type="password" value={config.apiKey} onChange={e => setConfig({...config, apiKey: e.target.value})} placeholder="API Key..." /></div>
+                    }
                   </div>
+                  <div className="setting-section"><div className="section-title"><Terminal size={12}/> Persona</div><textarea className="setting-input area" value={config.systemContext} onChange={e => setConfig({...config, systemContext: e.target.value})} /></div>
+                  
+                  <div className="setting-section" style={{marginTop: 'auto', marginBottom: '10px', background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px'}}>
+                    <div className="section-title" style={{marginBottom:'5px'}}><RefreshCw size={12}/> Updates</div>
+                    {updateStatus.status === 'idle' && <button className="setting-input" onClick={checkForUpdates} style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'6px', cursor:'pointer'}}><RefreshCw size={14}/> Check for Updates</button>}
+                    {updateStatus.status === 'checking' && <div style={{fontSize:'12px', color:'#aaa', textAlign:'center', padding:'5px'}}>Checking...</div>}
+                    {updateStatus.status === 'available' && <div style={{fontSize:'12px', color:'#3b82f6', textAlign:'center', padding:'5px'}}>Downloading update...</div>}
+                    {updateStatus.status === 'downloading' && (
+                      <div style={{width:'100%', background:'rgba(255,255,255,0.1)', height:'6px', borderRadius:'3px', overflow:'hidden'}}>
+                        <div style={{width: `${updateStatus.percent}%`, background:'#3b82f6', height:'100%'}} />
+                      </div>
+                    )}
+                    {updateStatus.status === 'ready' && <button className="setting-input" onClick={() => window.electronAPI.quitAndInstall()} style={{display:'flex', alignItems:'center', justifyContent:'center', gap:'6px', cursor:'pointer', background:'rgba(34, 197, 94, 0.2)', color:'#4ade80'}}><Download size={14}/> Restart & Install</button>}
+                    {updateStatus.status === 'uptodate' && <div style={{fontSize:'12px', color:'#4ade80', textAlign:'center', padding:'5px'}}><CheckCircle size={14} style={{display:'inline', verticalAlign:'middle'}}/> Up to date</div>}
+                  </div>
+                  <button className="save-btn" onClick={saveSettings}>Save</button>
                 </div>
-              </>
-            )}
-          </div>
-        )}
+              ) : (
+                <>
+                  <div className="chat-header">
+                    <span className={`status-text ${isLive ? 'live' : ''}`}>{isLive ? "● LISTENING" : "● AURA READY"}</span>
+                    <button className="icon-btn" onClick={() => setShowSettings(!showSettings)}><Settings size={14}/></button>
+                  </div>
+
+                  <div className="chat-body no-drag">
+                    {messages.map((m) => (
+                      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={m.id} className={`msg-row ${m.sender}`}>
+                        <div className="msg-bubble">
+                          {m.isImage ? "📸 Screen Captured" : m.sender === 'ai' && !m.text ? (
+                            <div className="thinking-bubble"><div className="dot"/><div className="dot"/><div className="dot"/></div>
+                          ) : (
+                            <MarkdownMessage content={m.text} onExecuteCommand={executeAgentCommand} />
+                          )}
+                        </div>
+                      </motion.div>
+                    ))}
+                    <div ref={chatEndRef} />
+                  </div>
+
+                  <div className="input-area no-drag">
+                    <div className="input-glass">
+                      <input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} placeholder="Ask Aura..." />
+                      {isLoading ? (
+                        <button className="icon-btn" onClick={handleStop} title="Stop Generating"><Square size={14} fill="currentColor" /></button>
+                      ) : (
+                        <button className="icon-btn" onClick={handleSend} title="Send"><Send size={14}/></button>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </Draggable>
     </div>
   );

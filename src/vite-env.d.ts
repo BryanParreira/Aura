@@ -6,8 +6,8 @@ interface ElectronAPI {
   setIgnoreMouse: (ignore: boolean, options?: any) => Promise<void>;
   setUndetectable: (state: boolean) => Promise<void>;
   
-  // NEW: Toggle Pin Definition
   toggleAlwaysOnTop: (flag: boolean) => Promise<void>;
+  runCommand: (cmd: string) => Promise<{ success: boolean; output: string }>; // NEW
 
   proxyRequest: (options: any) => Promise<any>;
   streamRequest: (options: any) => void;

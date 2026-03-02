@@ -6,8 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setIgnoreMouse: (ignore) => ipcRenderer.invoke('set-ignore-mouse', ignore),
   setUndetectable: (state) => ipcRenderer.invoke('set-undetectable', state),
   
-  // NEW: Toggle Pin
   toggleAlwaysOnTop: (flag) => ipcRenderer.invoke('toggle-always-on-top', flag),
+  runCommand: (cmd) => ipcRenderer.invoke('run-command', cmd), // NEW: Execute command
 
   proxyRequest: (options) => ipcRenderer.invoke('proxy-request', options),
   streamRequest: (options) => ipcRenderer.send('stream-request', options),

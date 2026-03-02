@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, desktopCapturer, globalShortcut, shell, Menu, Tray, screen, session, systemPreferences, net, nativeImage } = require('electron');
 const path = require('path');
 const { autoUpdater } = require('electron-updater');
+const { exec } = require('child_process'); // Added for OS commands
 
 const isDev = !app.isPackaged;
 let win;
@@ -24,18 +25,14 @@ async function checkMacPermissions() {
 function getIconPath() {
   let iconPath;
   if (isDev) {
-    // In development, look in the local build folder
     iconPath = process.platform === 'win32' 
       ? path.join(__dirname, '../build/icon.ico') 
       : path.join(__dirname, '../build/icons/16x16.png');
   } else {
-    // In production, look in resources (you must ensure icon is copied there or exists)
-    // Fallback to searching in the app bundle if extraResources isn't set up
     iconPath = process.platform === 'win32'
       ? path.join(process.resourcesPath, 'icon.ico')
       : path.join(process.resourcesPath, 'icon.png');
       
-    // Backup: try using the app root if resources path fails
     if (!require('fs').existsSync(iconPath)) {
         iconPath = path.join(app.getAppPath(), 'build/icon.ico');
     }
@@ -83,12 +80,12 @@ function createWindow() {
     type: 'panel', 
     enableLargerThanScreen: true,
     hasShadow: false,
-    alwaysOnTop: true, // Default is pinned
+    alwaysOnTop: true,
     transparent: true,
     frame: false,
     resizable: false,
     movable: false,
-    skipTaskbar: true, // Default hidden from taskbar
+    skipTaskbar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -103,8 +100,6 @@ function createWindow() {
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.setContentProtection(true);
 
-  // --- SAFETY NET: Force interaction when focused ---
-  // This ensures if you click the taskbar icon, the app becomes clickable
   win.on('focus', () => {
     win.setIgnoreMouseEvents(false);
   });
@@ -124,7 +119,7 @@ function createWindow() {
         win.hide(); 
     } else { 
         win.show(); 
-        win.setSkipTaskbar(false); // Ensure it's findable when woken
+        win.setSkipTaskbar(false);
         win.focus();
         win.webContents.send('app-woke-up'); 
     }
@@ -133,14 +128,24 @@ function createWindow() {
 
 // --- IPC HANDLERS ---
 
-// UPDATED: Toggle Always on Top AND Taskbar Visibility
 ipcMain.handle('toggle-always-on-top', (event, flag) => {
   if (win) {
     win.setAlwaysOnTop(flag, 'screen-saver');
-    // If we UNPIN (flag is false), SHOW in taskbar so user can find it.
-    // If we PIN (flag is true), HIDE from taskbar to stay invisible.
     win.setSkipTaskbar(flag); 
   }
+});
+
+// NEW: Execute OS Commands
+ipcMain.handle('run-command', (event, command) => {
+  return new Promise((resolve) => {
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        resolve({ success: false, output: error.message });
+      } else {
+        resolve({ success: true, output: stdout || stderr });
+      }
+    });
+  });
 });
 
 ipcMain.handle('proxy-request', async (event, { url, method, headers, body }) => {
